@@ -33,26 +33,30 @@ typedef union v3 {
 	f32 E[3];
 } v3;
 
-v3 operator*( f32 f, v3 v ) {
+internal inline v3 operator*( f32 f, v3 v ) {
 	v3 result = { f* v.x, f*v.y, f*v.z };
 	return result;
 }
-v3 operator-( v3 a, v3 b ) {
+internal inline v3 operator/( v3 a, v3 b ) {
+	v3 result = { a.x/b.x, a.y/b.y, a.z/b.z };
+	return result;
+}
+internal inline v3 operator-( v3 a, v3 b ) {
 	v3 result = { a.x-b.x, a.y-b.y, a.z-b.z };
 	return result;
 }
-v3 operator+( v3 a, v3 b ) {
+internal inline v3 operator+( v3 a, v3 b ) {
 	v3 result = { a.x+b.x, a.y+b.y, a.z+b.z };
 	return result;
 }
-v3 operator+=( v3 &a, v3 b ) {
+internal inline v3 operator+=( v3 &a, v3 b ) {
 	a.x += b.x;
 	a.y += b.y;
 	a.z += b.z;
 	return a;
 }
 
-v3 operator-( v3 &a ) {
+internal inline v3 operator-( v3 &a ) {
 	a.x = -a.x;
 	a.y = -a.y;
 	a.z = -a.z;
@@ -64,7 +68,7 @@ internal v3 V3( f32 x, f32 y, f32 z ) {
 	return result;
 }
 
-internal f32 inner( v3 a, v3 b ) {
+inline internal f32 inner( v3 a, v3 b ) {
 	f32 result = a.E[0] * b.E[0] + a.E[1] * b.E[1] + a.E[2] * b.E[2];
 	return result;
 }
@@ -79,7 +83,7 @@ internal v3 cross( v3 a, v3 b ) {
 	return result;
 }
 
-internal v3 NOZ( v3 n ) {
+internal inline v3 NOZ( v3 n ) {
 	v3 result;
 	f32 d = sqrt( inner(n,n) );
 	// What if d is 0??
@@ -89,7 +93,7 @@ internal v3 NOZ( v3 n ) {
 	return result;
 }
 
-internal v3 hadamard( v3 a, v3 b ) {
+internal inline v3 hadamard( v3 a, v3 b ) {
 	v3 result = { a.x*b.x, a.y*b.y, a.z*b.z };
 	return result;
 }
@@ -135,6 +139,13 @@ typedef struct sphere {
 	u32 material_index;
 } sphere;
 
+typedef struct ellipsoid {
+	v3 P;
+	v3 a;
+	f32 r;
+	u32 material_index;
+} ellipsoid;
+
 typedef struct material {
 	f32 scatter;
 	v3 color_reflect;
@@ -150,6 +161,11 @@ typedef struct world {
 	
 	u32 sphere_count;
 	sphere *spheres;
+	
+	u32 ellipsoid_count;
+	ellipsoid *ellipsoids;
+	
+	
 } world;
 
 typedef struct image_rgba {
@@ -258,7 +274,9 @@ f32 ray_intersects_sphere( v3 ray_origin, v3 ray_direction, sphere s ) {
 	*/
 	
 	v3 relative_origin = ray_origin - s.P;
-	f32 a = inner( ray_direction, ray_direction );
+	// TODO: maybe think about this more. ray_direction is always normalized, but it need not be
+	// mabe normalizing it always is more expensive than saving this is worth
+	f32 a = 1.0f; // inner( ray_direction, ray_direction );
 	f32 b = 2.0f * inner( relative_origin, ray_direction );
 	f32 c = inner( relative_origin, relative_origin ) - s.r*s.r;
 	
@@ -271,8 +289,9 @@ f32 ray_intersects_sphere( v3 ray_origin, v3 ray_direction, sphere s ) {
 		return F32MAX;
 	}
 	
-	f32 x1 = ( -b - sqrt(under) ) / a2;
-	f32 x2 = ( -b + sqrt(under) ) / a2;
+	f32 root = sqrt(under);
+	f32 x1 = ( -b - root ) / a2;
+	f32 x2 = ( -b + root ) / a2;
 	
 	f32 min_hit_distance = 0.0001f;
 	
@@ -287,18 +306,72 @@ f32 ray_intersects_sphere( v3 ray_origin, v3 ray_direction, sphere s ) {
 	return result;
 }
 
+
+f32 ray_intersects_ellipsoid( v3 ray_origin, v3 ray_direction, ellipsoid e ) {
+	f32 result;
+	v3 relative_origin = ray_origin - e.P;
+	
+	/*
+		point on an ellipsoid: x^2/a0^2 + y^2/a1^2 + z^2/a2^2 = r^2  ->  inner( p/a, p/a ) - r^2 = 0
+		point on a ray: r_0 + t*r_d
+
+		translating the ellipsoid to the origin is just moving -e.origin
+		inner( (r_0 + t*r_d)/a , (r_0 + t*r_d)/a) - r^2 = 0
+		inner( r_d/a, r_d/a ) * t^2 + 2 * inner( r_d/a, (r_0 - s_0)/a ) * t + inner( (r_0 - s_0)/a, (r_0 - s_0)/a ) - r^2 = 0
+		a = inner( r_d/a, r_d/a )
+		b = 2 * inner( r_d/a, (r_0 - s_0)/a )
+		c = inner( (r_0 - s_0)/a, (r_0 - s_0)/a ) - r^2
+	*/
+
+	v3 rd_over_a = ray_direction / e.a;
+	v3 ro_over_a = relative_origin / e.a;
+
+	f32 a = inner( rd_over_a, rd_over_a );
+	f32 b = 2 * inner( rd_over_a, ro_over_a );
+	f32 c = inner( ro_over_a, ro_over_a ) - e.r*e.r;
+	
+	// we divide by 2a which is only 0 is ray_direction is 0, so that won't happen
+	// if we would sqrt() a negative it means no solution meaning no intersection
+	f32 under = b*b - 4*a*c;
+	f32 tolerance = 0.000001f;
+	f32 a2 = 2.0f * a;
+	if( under < 0 || (a2 < tolerance && a2 > -tolerance) ) {
+		return F32MAX;
+	}
+	
+	f32 root = sqrt(under);
+	f32 x1 = ( -b - root ) / a2;
+	f32 x2 = ( -b + root ) / a2;
+	
+	f32 min_hit_distance = 0.0001f;
+	
+	if( x1 > min_hit_distance && x1 < x2 ) {
+		result = x1;
+	} else if( x2 > min_hit_distance) {
+		result = x2;
+	} else {
+		result = F32MAX;
+	}
+
+	return result;
+}
+
+
 v3 ray_cast( world* w, v3 ray_origin, v3 ray_direction ) {
 
 	v3 result = {};
 	
-	f32 hit_distance = F32MAX;
+	f32 hit_distance;
 	f32 min_hit_distance = 0.0001f;
 	u32 hit_material_index;
 	
+	u32 bounces_per_ray = 32;
+	
 	f32 t;
 	v3 attenuation = V3(1,1,1);
-	for( u32 ray_count=0; ray_count<8; ray_count++ ) {
+	for( u32 bounce_count=0; bounce_count<bounces_per_ray; bounce_count++ ) {
 		
+		hit_distance = F32MAX;
 		hit_material_index = 0;
 		v3 next_normal;
 		
@@ -324,9 +397,21 @@ v3 ray_cast( world* w, v3 ray_origin, v3 ray_direction ) {
 			}
 		}
 
+		for( u32 ellipsoid_index=0; ellipsoid_index < w->ellipsoid_count; ellipsoid_index++ ) {
+			ellipsoid current_ellipsoid = w->ellipsoids[ellipsoid_index];
+		
+			t = ray_intersects_ellipsoid( ray_origin, ray_direction, current_ellipsoid );
+			if( t > min_hit_distance && t < hit_distance ) {
+				hit_distance = t;
+				hit_material_index = current_ellipsoid.material_index;
+				// TODO: this would be different!!
+				next_normal = NOZ( ray_origin + t*ray_direction - current_ellipsoid.P );
+			}
+		}
+
+		material mat = w->materials[ hit_material_index ]; // either a mat or the nul mat
+		result += hadamard( attenuation, mat.color_emit );
 		if( hit_material_index ) {
-			material mat = w->materials[ hit_material_index ];
-			result += hadamard( attenuation, mat.color_emit );
 			// f32 cos_attenuation = inner( -ray_direction, next_normal );
 			// if( cos_attenuation < 0 ) {
 			// 	cos_attenuation = 0;
@@ -339,10 +424,7 @@ v3 ray_cast( world* w, v3 ray_origin, v3 ray_direction ) {
 			v3 bounce_random = NOZ( next_normal + V3(random_bilateral(), random_bilateral(), random_bilateral() ));
 			ray_direction = NOZ( lerp( bounce_random, mat.scatter, bounce_pure ) );
 		} else {
-			// final color
-			material mat = w->materials[ hit_material_index ];
-			result += hadamard( attenuation, mat.color_emit );
-			break; // no hit
+			break; // no more hits
 		}
 	}
 	
@@ -358,56 +440,17 @@ u32 rgbapack_4x8( v3 color ) {
 	return result;
 }
 
+u32* get_pixel_pointer(image_rgba img, u32 x, u32 y) {
+	u32 *result = img.pixels + x + y * img.width;
+	return result;
+}
 
+void raytrace_tile( world *w, image_rgba img, u32 x_start, u32 x_max, u32 y_start, u32 y_max ) {
 
-int main() {
-
-	setbuf(stdout, NULL); // turn off printf buffering
-
-	image_rgba img = allocate_image( 1280, 720 );
-	
-	material materials[5];
-	materials[0].color_emit = V3(0.3f, 0.4f, 0.5f);
-	materials[1].color_reflect = V3(.5f,.5f,.5f);
-	materials[1].color_emit = V3(0,0,0);
-	materials[2].color_reflect = V3(0.7f,0.5f,.3f);
-	materials[2].color_emit = V3(0,0,0);
-	materials[3].color_reflect = V3(0.9f,0,0);
-	materials[3].color_emit = V3(0,0,0);
-	materials[4].color_reflect = V3(0.2f,0.8f,0.2f);
-	materials[4].color_emit = V3(0,0,0);
-	materials[4].scatter = 1.0f;
-	
-	plane planes[1];
-	planes[0].N = V3( 0, 0, 1.0f );
-	planes[0].d = 0;
-	planes[0].material_index = 1;
-	
-	sphere spheres[3];
-	spheres[0].r = 1;
-	spheres[0].P = V3(0,0,0);
-	spheres[0].material_index = 2;
-	spheres[1].r = 1;
-	spheres[1].P = V3(3,-2,0);
-	spheres[1].material_index = 3;
-	spheres[2].r = 1;
-	spheres[2].P = V3(-1,-1,2);
-	spheres[2].material_index = 4;
-	
-	world w;
-	w.material_count = ARRAY_COUNT(materials);
-	w.materials = materials;
-	w.plane_count = ARRAY_COUNT(planes);
-	w.planes = planes;
-	w.sphere_count = ARRAY_COUNT(spheres);
-	w.spheres = spheres;
-	
-	// let's do this!
-	// so we pass a ray from every point on the image in the camera direction onto the world and see what we hit.
-	// if we hit nothing, we use the mat[0] to set the pixel
-	
 	u32 rays_per_pixel = 16;
-	v3 camera_p = V3(0, -10, 1);
+	v3 camera_p = V3(0, -10, 2.4f);
+	// v3 camera_p = V3(0, 0.1f, 8);
+
 	// look at the origin
 	v3 camera_z = NOZ(camera_p);
 	v3 camera_x = NOZ(cross( V3(0,0,1), camera_z ));
@@ -422,31 +465,31 @@ int main() {
 		film_w = film_h * ( (f32)img.width / (f32)img.height);
 	}
 	
+	f32 pixel_half_width = 0.5f / (f32)img.width;
+	f32 pixel_half_height = 0.5f / (f32)img.height;
 	f32 half_film_w = 0.5f * film_w;
 	f32 half_film_h = 0.5f * film_h;
-	v3 film_center = camera_p - film_dist * camera_z;
-	
-	u32* out = img.pixels;
 	// convert these from image space to film space which is a square from -1 to 1
-	for( u32 y=0; y<img.height; y++ ) {
-		if( y % 8 == 0 ) {
-			printf("\rRaycasting %.2f%%", 100.0 * (f32)y / (f32)img.height );
-		}
-		f32 film_y = -1.0f + 2.0f * ( (f32)y / (f32)img.height );
-		for( u32 x=0; x<img.width; x++ ) {
+	v3 film_center = camera_p - film_dist * camera_z;
 
+
+	for( u32 y=y_start; y<y_max; y++ ) {
+		f32 film_y = -1.0f + 2.0f * ( (f32)y / (f32)img.height );
+		u32* out = get_pixel_pointer(img, x_start, y);
+		for( u32 x=x_start; x<x_max; x++ ) {
 
 			f32 film_x = -1.0f + 2.0f * ( (f32)x / (f32)img.width );
-
-			v3 film_p = film_center + film_x * half_film_w * camera_x + film_y * half_film_h * camera_y;
-
-			v3 ray_origin = camera_p;
-			v3 ray_direction = NOZ( film_p - camera_p );
 
 			v3 color = {};
 			f32 contribution = 1.0f / (f32)rays_per_pixel;
 			for( u32 ray_index = 0; ray_index<rays_per_pixel; ray_index++ ) {
-				color += contribution * ray_cast( &w, ray_origin, ray_direction );
+
+				f32 offset_x = film_x + random_bilateral() * pixel_half_width;	
+				f32 offset_y = film_y + random_bilateral() * pixel_half_height;	
+				v3 film_p = film_center + offset_x * half_film_w * camera_x + offset_y * half_film_h * camera_y;
+				v3 ray_origin = camera_p;
+				v3 ray_direction = NOZ( film_p - camera_p );
+				color += contribution * ray_cast( w, ray_origin, ray_direction );
 			}
 			
 			v3 color_gamma_corrected = {
@@ -458,7 +501,126 @@ int main() {
 			*out++ = color_bmp;
 		}
 	}
+	
+}
 
+
+int main() {
+
+	setbuf(stdout, NULL); // turn off printf buffering
+
+	// image_rgba img = allocate_image( 2560, 1600 );
+	image_rgba img = allocate_image( 1280, 720 );
+// #if 0
+	material materials[6] = {};
+	materials[0].color_emit = V3(0.4f, 0.5f, 0.6f);
+	materials[1].color_reflect = V3(.7f,.7f,.7f);
+	materials[1].scatter = 0.4f;
+	materials[2].color_reflect = V3(0.7f,0.5f,.3f);
+	materials[2].color_emit = V3(0,0,0);
+	materials[3].color_reflect = V3(0.5f,0.5f,0.5f);
+	materials[3].color_emit = V3(4.0f,0,0);
+	materials[4].color_reflect = V3(0.2f,0.8f,0.2f);
+	materials[4].color_emit = V3(0,0,0);
+	materials[4].scatter = 0.7f;
+	materials[5].color_reflect = V3(0.6f,0.6f,0.8f);
+	materials[5].color_emit = V3(0,0,0);
+	materials[5].scatter = 0.9f;
+	
+	plane planes[1];
+	planes[0].N = V3( 0, 0, 1.0f );
+	planes[0].d = 0;
+	planes[0].material_index = 1;
+	
+	sphere spheres[4];
+	spheres[0].r = 1;
+	spheres[0].P = V3(0,0,0);
+	spheres[0].material_index = 2;
+	spheres[1].r = 0.4;
+	spheres[1].P = V3(3,-2,1);
+	spheres[1].material_index = 3;
+	spheres[2].r = 1;
+	spheres[2].P = V3(-1,-1,2);
+	spheres[2].material_index = 4;
+	spheres[3].r = 1;
+	spheres[3].P = V3(1,-1,3);
+	spheres[3].material_index = 5;
+	
+	// TODO: needs a direction / rotation!
+	ellipsoid ellipsoids[1];
+	ellipsoids[0].r = 1;
+	ellipsoids[0].a = V3(1,.3,.5);
+	ellipsoids[0].P = V3(-2,-3,1);
+	ellipsoids[0].material_index = 2;
+	
+	
+// #endif
+#if 0
+	material materials[6] = {};
+	materials[0].color_emit = V3(1,1,1);
+
+	materials[1].color_reflect = V3(0.6f, 0.6f, 0.6f);
+
+	materials[2].color_emit = V3(5,0,0);
+	materials[3].color_emit = V3(0,5,0);
+	materials[4].color_emit = V3(0,0,5);
+		
+	plane planes[1];
+	planes[0].N = V3( 0, 0, 1.0f );
+	planes[0].d = 0;
+	planes[0].material_index = 1;
+	
+	sphere spheres[3];
+	spheres[0].r = 0.6;
+	spheres[0].P = V3(-1,0,1);
+	spheres[0].material_index = 2;
+	spheres[1].r = 0.6;
+	spheres[1].P = V3(.7f,.7f,1);
+	spheres[1].material_index = 3;
+	spheres[2].r = 0.6;
+	spheres[2].P = V3(.7f,-.7f,1);
+	spheres[2].material_index = 4;
+#endif	
+	
+	
+	world w;
+	w.material_count = ARRAY_COUNT(materials);
+	w.materials = materials;
+	w.plane_count = ARRAY_COUNT(planes);
+	w.planes = planes;
+	w.sphere_count = ARRAY_COUNT(spheres);
+	w.spheres = spheres;
+	w.ellipsoid_count = ARRAY_COUNT(ellipsoids);
+	w.ellipsoids = ellipsoids;
+	
+	// let's do this!
+	// so we pass a ray from every point on the image in the camera direction onto the world and see what we hit.
+	// if we hit nothing, we use the mat[0] to set the pixel
+	
+	// raytrace_tile( &w, img, 0, img.width, 10, img.height );
+	u8 core_count = 8;
+	u32 tile_width = (img.width + core_count - 1) / core_count;
+	u32 tile_height = tile_width;
+	printf("Raytracing tiles %dx%d\n", tile_width, tile_height);
+
+	for( u32 x_start = 0; x_start<img.width; x_start += tile_width ) {
+		for( u32 y_start = 0; y_start<img.height; y_start += tile_height ) {
+			u32 x_end = x_start + tile_width;
+			u32 y_end = y_start + tile_height;
+			if( x_end > img.width ) {
+				x_end = img.width;
+			}
+			if( y_end > img.height ) {
+				y_end = img.height;
+			}
+			printf("Raytracing tile [%d-%d,%d-%d]\n", x_start, x_end, y_start, y_end);
+			raytrace_tile( &w, img, x_start, x_end, y_start, y_end );
+		}
+	}
+	// raytrace_tile( &w, img, 0, img.width/2, 0, img.height/2 );
+	// raytrace_tile( &w, img, img.width/2, img.width, 0, img.height/2 );
+	// raytrace_tile( &w, img, 0, img.width/2, img.height/2, img.height );
+	// raytrace_tile( &w, img, img.width/2, img.width, img.height/2, img.height );
 	
 	write_bmp( "test.bmp", img );
 	
