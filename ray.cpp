@@ -1,11 +1,13 @@
 /*
-clang -std=c11 -g -Wpadded -Wall -Wextra -pedantic -Wno-missing-braces -Wno-gnu-anonymous-struct -O0 ray.c -o ray
+clang++ -std=c++11 -g -Wall -Wextra -pedantic -Wpadded -Wno-missing-braces -Wno-gnu-anonymous-struct -O3 ray.cpp -o ray; and ./ray
 -Wpadded? yes, to find errors in bmp struct packing
 */
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
 #include <float.h>
+
+#define ARRAY_COUNT(array) ( sizeof(array) / sizeof(array[0]) )
 
 #define f32 float
 #define F32MAX FLT_MAX
@@ -43,6 +45,19 @@ v3 operator+( v3 a, v3 b ) {
 	v3 result = { a.x+b.x, a.y+b.y, a.z+b.z };
 	return result;
 }
+v3 operator+=( v3 &a, v3 b ) {
+	a.x += b.x;
+	a.y += b.y;
+	a.z += b.z;
+	return a;
+}
+
+v3 operator-( v3 &a ) {
+	a.x = -a.x;
+	a.y = -a.y;
+	a.z = -a.z;
+	return a;
+}
 
 internal v3 V3( f32 x, f32 y, f32 z ) {
 	v3 result = { x, y, z };
@@ -73,6 +88,18 @@ internal v3 NOZ( v3 n ) {
 	result.z = n.z / d;
 	return result;
 }
+
+internal v3 hadamard( v3 a, v3 b ) {
+	v3 result = { a.x*b.x, a.y*b.y, a.z*b.z };
+	return result;
+}
+
+internal v3 lerp( v3 a, f32 d, v3 b ) {
+	f32 c = 1.0f - d;
+	v3 result = { c*a.x + d*b.x, c*a.y + d*b.y, c*a.z + d*b.z };
+	return result;
+}
+
 // don't pad so we write a correct header!
 #pragma pack(push, 1)
 typedef struct bitmap_file_header {
@@ -109,7 +136,9 @@ typedef struct sphere {
 } sphere;
 
 typedef struct material {
-	v3 color;
+	f32 scatter;
+	v3 color_reflect;
+	v3 color_emit;
 } material;
 
 typedef struct world {
@@ -161,6 +190,16 @@ void write_bmp( const char* filename, image_rgba img ) {
 image_rgba allocate_image( u32 width, u32 height ) {
 	image_rgba result = { width, height, 0 };
 	result.pixels = (u32*)malloc( sizeof(u32) * width * height );
+	return result;
+}
+
+f32 random_unilateral( void ) {
+	f32 result = (f32)rand() / (f32) RAND_MAX;
+	return result;
+}
+
+f32 random_bilateral( void ) {
+	f32 result = -1.0f + 2.0f * random_unilateral();
 	return result;
 }
 
@@ -216,40 +255,78 @@ f32 ray_intersects_sphere( v3 ray_origin, v3 ray_direction, sphere s ) {
 	f32 x1 = ( -b - sqrt(under) ) / a2;
 	f32 x2 = ( -b + sqrt(under) ) / a2;
 	
-	if( x1 < x2 ) {
+	f32 min_hit_distance = 0.0001f;
+	
+	if( x1 > min_hit_distance && x1 < x2 ) {
 		result = x1;
-	} else {
+	} else if( x2 > min_hit_distance) {
 		result = x2;
+	} else {
+		result = F32MAX;
 	}
 
 	return result;
 }
 
 v3 ray_cast( world* w, v3 ray_origin, v3 ray_direction ) {
-	v3 result = w->materials[0].color;
+
+	v3 result = {};
 	
 	f32 hit_distance = F32MAX;
+	f32 min_hit_distance = 0.0001f;
+	u32 hit_material_index;
 	
-	for( u32 plane_index=0; plane_index < w->plane_count; plane_index++ ) {
-		plane current_plane = w->planes[plane_index];
+	f32 t;
+	v3 attenuation = V3(1,1,1);
+	for( u32 ray_count=0; ray_count<8; ray_count++ ) {
 		
-		f32 this_distance = ray_intersects_plane( ray_origin, ray_direction, current_plane );
-		if( this_distance > 0 && this_distance < hit_distance ) {
-			hit_distance = this_distance;
-			result = w->materials[ current_plane.material_index ].color;
+		hit_material_index = 0;
+		v3 next_normal;
+		
+		for( u32 plane_index=0; plane_index < w->plane_count; plane_index++ ) {
+			plane current_plane = w->planes[plane_index];
+		
+			t = ray_intersects_plane( ray_origin, ray_direction, current_plane );
+			if( t > min_hit_distance && t < hit_distance ) {
+				hit_distance = t;
+				hit_material_index = current_plane.material_index;
+				next_normal = current_plane.N;
+			}
+		}
+
+		for( u32 sphere_index=0; sphere_index < w->sphere_count; sphere_index++ ) {
+			sphere current_sphere = w->spheres[sphere_index];
+		
+			t = ray_intersects_sphere( ray_origin, ray_direction, current_sphere );
+			if( t > min_hit_distance && t < hit_distance ) {
+				hit_distance = t;
+				hit_material_index = current_sphere.material_index;
+				next_normal = NOZ( ray_origin + t*ray_direction - current_sphere.P );
+			}
+		}
+
+		if( hit_material_index ) {
+			material mat = w->materials[ hit_material_index ];
+			result += hadamard( attenuation, mat.color_emit );
+			// f32 cos_attenuation = inner( -ray_direction, next_normal );
+			// if( cos_attenuation < 0 ) {
+			// 	cos_attenuation = 0;
+			// }
+			attenuation = hadamard( attenuation, mat.color_reflect );
+
+			ray_origin += hit_distance * ray_direction;
+
+			v3 bounce_pure = ray_direction - 2.0f * inner(ray_direction, next_normal) *  next_normal;
+			v3 bounce_random = NOZ( next_normal + V3(random_bilateral(), random_bilateral(), random_bilateral() ));
+			ray_direction = NOZ( lerp( bounce_random, mat.scatter, bounce_pure ) );
+		} else {
+			// final color
+			material mat = w->materials[ hit_material_index ];
+			result += hadamard( attenuation, mat.color_emit );
+			break; // no hit
 		}
 	}
-
-	for( u32 sphere_index=0; sphere_index < w->sphere_count; sphere_index++ ) {
-		sphere current_sphere = w->spheres[sphere_index];
-		
-		f32 this_distance = ray_intersects_sphere( ray_origin, ray_direction, current_sphere );
-		if( this_distance > 0 && this_distance < hit_distance ) {
-			hit_distance = this_distance;
-			result = w->materials[ current_sphere.material_index ].color;
-		}
-	}
-
+	
 	
 	return result;
 }
@@ -264,33 +341,41 @@ u32 rgbapack_4x8( v3 color ) {
 
 int main() {
 
-	image_rgba img = allocate_image( 800, 600 );
+	setbuf(stdout, NULL); // turn off printf buffering
+
+	image_rgba img = allocate_image( 1280, 720 );
 	
-	material mat[4];
-	mat[0].color = V3(0.1f, 0.1f, 0.1f);
-	mat[1].color = V3(1,0,0);
-	mat[2].color = V3(0,0,1);
-	mat[3].color = V3(0,0.5f,0.5f);
+	material materials[4];
+	materials[0].color_emit = V3(0.3f, 0.4f, 0.5f);
+	materials[1].color_reflect = V3(.5f,.5f,.5f);
+	materials[1].color_emit = V3(0,0,0);
+	materials[2].color_reflect = V3(0.7f,0.5f,.3f);
+	materials[2].color_emit = V3(0,0,0);
+	materials[3].color_reflect = V3(0,0.5f,0.5f);
+	materials[3].color_emit = V3(0,0,0);
 	
-	plane p;
-	p.N = V3( 0, 0, 1.0f );
-	p.d = 0;
-	p.material_index = 1;
+	plane planes[1];
+	planes[0].N = V3( 0, 0, 1.0f );
+	planes[0].d = 0;
+	planes[0].material_index = 1;
 	
-	sphere spheres[1];
+	sphere spheres[3];
 	spheres[0].r = 1;
 	spheres[0].P = V3(0,0,0);
 	spheres[0].material_index = 2;
-	// spheres[1].r = 1;
-	// spheres[1].P = V3(1.0f,2.0f,2.0f);
-	// spheres[1].material_index = 3;
+	spheres[1].r = 1;
+	spheres[1].P = V3(3,-2,0);
+	spheres[1].material_index = 2;
+	spheres[2].r = 1;
+	spheres[2].P = V3(-1,-1,2);
+	spheres[2].material_index = 2;
 	
 	world w;
-	w.material_count = 4;
-	w.materials = mat;
-	w.plane_count = 1;
-	w.planes = &p;
-	w.sphere_count = 1;
+	w.material_count = ARRAY_COUNT(materials);
+	w.materials = materials;
+	w.plane_count = ARRAY_COUNT(planes);
+	w.planes = planes;
+	w.sphere_count = ARRAY_COUNT(spheres);
 	w.spheres = spheres;
 	
 	// let's do this!
@@ -306,6 +391,12 @@ int main() {
 	f32 film_dist = 1.0f;
 	f32 film_w = 1.0f;
 	f32 film_h = 1.0f;
+	if( img.width > img.height ) {
+		film_h = film_w * ( (f32)img.height / (f32)img.width);
+	} else if( img.height > img.width ) {
+		film_w = film_h * ( (f32)img.width / (f32)img.height);
+	}
+	
 	f32 half_film_w = 0.5f * film_w;
 	f32 half_film_h = 0.5f * film_h;
 	v3 film_center = camera_p - film_dist * camera_z;
@@ -318,24 +409,30 @@ int main() {
 		}
 		f32 film_y = -1.0f + 2.0f * ( (f32)y / (f32)img.height );
 		for( u32 x=0; x<img.width; x++ ) {
-			
-			
+
+
 			f32 film_x = -1.0f + 2.0f * ( (f32)x / (f32)img.width );
-			
+
 			v3 film_p = film_center + film_x * half_film_w * camera_x + film_y * half_film_h * camera_y;
-			
+
 			v3 ray_origin = camera_p;
 			v3 ray_direction = NOZ( film_p - camera_p );
-			
-			v3 color = ray_cast( &w, ray_origin, ray_direction );
+
+			u32 rays_per_pixel = 8;
+			v3 color = {};
+			f32 contribution = 1.0f / (f32)rays_per_pixel;
+			for( u32 ray_index = 0; ray_index<rays_per_pixel; ray_index++ ) {
+				color += contribution * ray_cast( &w, ray_origin, ray_direction );
+			}
 			u32 color_bmp = rgbapack_4x8( color );
 			*out++ = color_bmp;
 		}
 	}
-	
+
 	
 	write_bmp( "test.bmp", img );
 	
+	printf("\nDone.\n");
 	return 0;
 }
 
