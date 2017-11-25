@@ -193,6 +193,25 @@ image_rgba allocate_image( u32 width, u32 height ) {
 	return result;
 }
 
+// gamma correction, see wikipedia
+internal f32 sRGB_from_linear( f32 linear ) {
+	f32 S;
+	
+	if( linear < 0 ) {
+		linear = 0;
+	}
+	if( linear > 1.0f ) {
+		linear = 1.0f;
+	}
+	
+	if( linear <= 0.0031308f ) {
+		S = linear * 12.92f;
+	} else {
+		S = 1.055f * pow(linear, 1.0f/2.4f) - 0.055f;
+	}
+	return S;
+}
+
 f32 random_unilateral( void ) {
 	f32 result = (f32)rand() / (f32) RAND_MAX;
 	return result;
@@ -339,20 +358,25 @@ u32 rgbapack_4x8( v3 color ) {
 	return result;
 }
 
+
+
 int main() {
 
 	setbuf(stdout, NULL); // turn off printf buffering
 
 	image_rgba img = allocate_image( 1280, 720 );
 	
-	material materials[4];
+	material materials[5];
 	materials[0].color_emit = V3(0.3f, 0.4f, 0.5f);
 	materials[1].color_reflect = V3(.5f,.5f,.5f);
 	materials[1].color_emit = V3(0,0,0);
 	materials[2].color_reflect = V3(0.7f,0.5f,.3f);
 	materials[2].color_emit = V3(0,0,0);
-	materials[3].color_reflect = V3(0,0.5f,0.5f);
+	materials[3].color_reflect = V3(0.9f,0,0);
 	materials[3].color_emit = V3(0,0,0);
+	materials[4].color_reflect = V3(0.2f,0.8f,0.2f);
+	materials[4].color_emit = V3(0,0,0);
+	materials[4].scatter = 1.0f;
 	
 	plane planes[1];
 	planes[0].N = V3( 0, 0, 1.0f );
@@ -365,10 +389,10 @@ int main() {
 	spheres[0].material_index = 2;
 	spheres[1].r = 1;
 	spheres[1].P = V3(3,-2,0);
-	spheres[1].material_index = 2;
+	spheres[1].material_index = 3;
 	spheres[2].r = 1;
 	spheres[2].P = V3(-1,-1,2);
-	spheres[2].material_index = 2;
+	spheres[2].material_index = 4;
 	
 	world w;
 	w.material_count = ARRAY_COUNT(materials);
@@ -382,6 +406,7 @@ int main() {
 	// so we pass a ray from every point on the image in the camera direction onto the world and see what we hit.
 	// if we hit nothing, we use the mat[0] to set the pixel
 	
+	u32 rays_per_pixel = 16;
 	v3 camera_p = V3(0, -10, 1);
 	// look at the origin
 	v3 camera_z = NOZ(camera_p);
@@ -418,13 +443,18 @@ int main() {
 			v3 ray_origin = camera_p;
 			v3 ray_direction = NOZ( film_p - camera_p );
 
-			u32 rays_per_pixel = 8;
 			v3 color = {};
 			f32 contribution = 1.0f / (f32)rays_per_pixel;
 			for( u32 ray_index = 0; ray_index<rays_per_pixel; ray_index++ ) {
 				color += contribution * ray_cast( &w, ray_origin, ray_direction );
 			}
-			u32 color_bmp = rgbapack_4x8( color );
+			
+			v3 color_gamma_corrected = {
+				sRGB_from_linear( color.r ),
+				sRGB_from_linear( color.g ),
+				sRGB_from_linear( color.b ),
+			};
+			u32 color_bmp = rgbapack_4x8( color_gamma_corrected );
 			*out++ = color_bmp;
 		}
 	}
