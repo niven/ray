@@ -574,7 +574,7 @@ int main() {
 	
 	// TODO: needs a direction / rotation!
 	ellipsoid ellipsoids[1];
-	ellipsoids[0].a = V3(1,1,1);
+	ellipsoids[0].a = V3(1,1,0.6);
 	ellipsoids[0].P = V3(1,-.5,1);
 	ellipsoids[0].material_index = 5;
 	
