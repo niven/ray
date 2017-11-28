@@ -405,7 +405,8 @@ v3 ray_cast( world* w, v3 ray_origin, v3 ray_direction ) {
 				hit_distance = t;
 				hit_material_index = current_ellipsoid.material_index;
 				// TODO: this would be different!!
-				next_normal = NOZ( ray_origin + t*ray_direction - current_ellipsoid.P );
+				v3 hit_location = hit_distance * ray_direction;
+				next_normal = NOZ( ray_origin + t*ray_direction - hadamard(hit_location, current_ellipsoid.a ) );
 			}
 		}
 
@@ -534,7 +535,7 @@ int main() {
 	
 	sphere spheres[4];
 	spheres[0].r = 1;
-	spheres[0].P = V3(0,0,0);
+	spheres[0].P = V3(20,0,0);
 	spheres[0].material_index = 2;
 	spheres[1].r = 0.4;
 	spheres[1].P = V3(3,-2,1);
@@ -550,8 +551,8 @@ int main() {
 	ellipsoid ellipsoids[1];
 	ellipsoids[0].r = 1;
 	ellipsoids[0].a = V3(1,.3,.5);
-	ellipsoids[0].P = V3(-2,-3,1);
-	ellipsoids[0].material_index = 2;
+	ellipsoids[0].P = V3(1,0,1);
+	ellipsoids[0].material_index = 5;
 	
 	
 // #endif
