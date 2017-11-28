@@ -513,7 +513,7 @@ int main() {
 	// image_rgba img = allocate_image( 2560, 1600 );
 	image_rgba img = allocate_image( 1280, 720 );
 // #if 0
-	material materials[6] = {};
+	material materials[8] = {};
 	materials[0].color_emit = V3(0.4f, 0.5f, 0.6f);
 	materials[1].color_reflect = V3(.7f,.7f,.7f);
 	materials[1].scatter = 0.4f;
@@ -527,13 +527,17 @@ int main() {
 	materials[5].color_reflect = V3(0.6f,0.6f,0.8f);
 	materials[5].color_emit = V3(0,0,0);
 	materials[5].scatter = 0.9f;
+	materials[6].color_reflect = V3(1,1,1);
+	// yellow light
+	materials[7].color_reflect = V3(0.5f,0.5f,0.5f);
+	materials[7].color_emit = V3(2.0f,2.0f,0.1f);
 	
 	plane planes[1];
 	planes[0].N = V3( 0, 0, 1.0f );
 	planes[0].d = 0;
 	planes[0].material_index = 1;
 	
-	sphere spheres[4];
+	sphere spheres[30];
 	spheres[0].r = 1;
 	spheres[0].P = V3(20,0,0);
 	spheres[0].material_index = 2;
@@ -547,11 +551,24 @@ int main() {
 	spheres[3].P = V3(1,-1,3);
 	spheres[3].material_index = 5;
 	
+	// coordspheres
+	u32 sidx = 4;
+	for( s32 x=-2; x<3; x++ ) {
+		for( s32 y=-2; y<3; y++ ) {
+			spheres[sidx].r = 0.1; spheres[sidx].P = V3(x,y,0); spheres[sidx].material_index = 6;
+			sidx++;
+		}
+	}
+
+	spheres[29].r = 0.2;
+	spheres[29].P = V3(1,-2,.5f);
+	spheres[29].material_index = 7;
+	
 	// TODO: needs a direction / rotation!
 	ellipsoid ellipsoids[1];
 	ellipsoids[0].r = 1;
 	ellipsoids[0].a = V3(1,.3,.5);
-	ellipsoids[0].P = V3(1,0,1);
+	ellipsoids[0].P = V3(1,-.5,1);
 	ellipsoids[0].material_index = 5;
 	
 	
