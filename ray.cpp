@@ -142,7 +142,6 @@ typedef struct sphere {
 typedef struct ellipsoid {
 	v3 P;
 	v3 a;
-	f32 r;
 	u32 material_index;
 } ellipsoid;
 
@@ -410,7 +409,7 @@ v3 ray_cast( world* w, v3 ray_origin, v3 ray_direction ) {
 				// = 2 * point_on_surface / hadamard(e.a, e.a) (we can drop the 2 since we normalize anyway)
 				// for a sphere that is just a vector from the center to the point on the surface and had( (1,1,1), (1,1,1) ) is (1,1,1)...
 				v3 hit_location = ray_origin + t*ray_direction;
-				next_normal = NOZ( hit_location / hadamard(current_ellipsoid.a, current_ellipsoid.a)  );
+				next_normal = NOZ( hit_location / hadamard(current_ellipsoid.a, current_ellipsoid.a) - current_ellipsoid.P );
 			}
 		}
 
@@ -575,7 +574,6 @@ int main() {
 	
 	// TODO: needs a direction / rotation!
 	ellipsoid ellipsoids[1];
-	ellipsoids[0].r = 1;
 	ellipsoids[0].a = V3(1,1,1);
 	ellipsoids[0].P = V3(1,-.5,1);
 	ellipsoids[0].material_index = 5;
