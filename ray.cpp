@@ -312,15 +312,15 @@ f32 ray_intersects_ellipsoid( v3 ray_origin, v3 ray_direction, ellipsoid e ) {
 	v3 relative_origin = ray_origin - e.P;
 	
 	/*
-		point on an ellipsoid: x^2/a0^2 + y^2/a1^2 + z^2/a2^2 = r^2  ->  inner( p/a, p/a ) - r^2 = 0
+		point on an ellipsoid: x^2/a0^2 + y^2/a1^2 + z^2/a2^2 = 1  ->  inner( p/a, p/a ) - 1 = 0
 		point on a ray: r_0 + t*r_d
 
 		translating the ellipsoid to the origin is just moving -e.origin
-		inner( (r_0 + t*r_d)/a , (r_0 + t*r_d)/a) - r^2 = 0
-		inner( r_d/a, r_d/a ) * t^2 + 2 * inner( r_d/a, (r_0 - s_0)/a ) * t + inner( (r_0 - s_0)/a, (r_0 - s_0)/a ) - r^2 = 0
+		inner( (r_0 + t*r_d)/a , (r_0 + t*r_d)/a) - 1 = 0
+		inner( r_d/a, r_d/a ) * t^2 + 2 * inner( r_d/a, (r_0 - s_0)/a ) * t + inner( (r_0 - s_0)/a, (r_0 - s_0)/a ) - 1 = 0
 		a = inner( r_d/a, r_d/a )
 		b = 2 * inner( r_d/a, (r_0 - s_0)/a )
-		c = inner( (r_0 - s_0)/a, (r_0 - s_0)/a ) - r^2
+		c = inner( (r_0 - s_0)/a, (r_0 - s_0)/a ) - 1
 	*/
 
 	v3 rd_over_a = ray_direction / e.a;
@@ -328,7 +328,7 @@ f32 ray_intersects_ellipsoid( v3 ray_origin, v3 ray_direction, ellipsoid e ) {
 
 	f32 a = inner( rd_over_a, rd_over_a );
 	f32 b = 2 * inner( rd_over_a, ro_over_a );
-	f32 c = inner( ro_over_a, ro_over_a ) - e.r*e.r;
+	f32 c = inner( ro_over_a, ro_over_a ) - 1;
 	
 	// we divide by 2a which is only 0 is ray_direction is 0, so that won't happen
 	// if we would sqrt() a negative it means no solution meaning no intersection
@@ -404,9 +404,13 @@ v3 ray_cast( world* w, v3 ray_origin, v3 ray_direction ) {
 			if( t > min_hit_distance && t < hit_distance ) {
 				hit_distance = t;
 				hit_material_index = current_ellipsoid.material_index;
-				// TODO: this would be different!!
-				v3 hit_location = hit_distance * ray_direction;
-				next_normal = NOZ( ray_origin + t*ray_direction - hadamard(hit_location, current_ellipsoid.a ) );
+				// TODO: this is still wrong.
+				// The normal of an ellipsoid is the gradient of x^2/a^ + y^2/b^2 + z^2/c^2 - r^2 = 0
+				// Which is (2x/a^2, 2y/b^2, 2z/c^2)
+				// = 2 * point_on_surface / hadamard(e.a, e.a) (we can drop the 2 since we normalize anyway)
+				// for a sphere that is just a vector from the center to the point on the surface and had( (1,1,1), (1,1,1) ) is (1,1,1)...
+				v3 hit_location = ray_origin + t*ray_direction;
+				next_normal = NOZ( hit_location / hadamard(current_ellipsoid.a, current_ellipsoid.a)  );
 			}
 		}
 
@@ -564,10 +568,15 @@ int main() {
 	spheres[29].P = V3(1,-2,.5f);
 	spheres[29].material_index = 7;
 	
+	// spheres[30].r = 1;
+	// spheres[30].P = V3(1,-.5,1);
+	// spheres[30].material_index = 5;
+	
+	
 	// TODO: needs a direction / rotation!
 	ellipsoid ellipsoids[1];
 	ellipsoids[0].r = 1;
-	ellipsoids[0].a = V3(1,.3,.5);
+	ellipsoids[0].a = V3(1,1,1);
 	ellipsoids[0].P = V3(1,-.5,1);
 	ellipsoids[0].material_index = 5;
 	
