@@ -404,12 +404,16 @@ v3 ray_cast( world* w, v3 ray_origin, v3 ray_direction ) {
 				hit_distance = t;
 				hit_material_index = current_ellipsoid.material_index;
 				// TODO: this is still wrong.
-				// The normal of an ellipsoid is the gradient of x^2/a^ + y^2/b^2 + z^2/c^2 - r^2 = 0
+				// The normal of an ellipsoid is the gradient of x^2/a^ + y^2/b^2 + z^2/c^2 - 1 = 0
 				// Which is (2x/a^2, 2y/b^2, 2z/c^2)
 				// = 2 * point_on_surface / hadamard(e.a, e.a) (we can drop the 2 since we normalize anyway)
 				// for a sphere that is just a vector from the center to the point on the surface and had( (1,1,1), (1,1,1) ) is (1,1,1)...
+				// so there we translate the center of the sphere to the origin
+				// for an ellipsoid we also need to translate something?
+				// YES! We need to translate the ellipsoid to the origin, so the point on the surface will have the correct sign
+				// when we multiply with the 1/a So actually moving the point is what we need to do, not the resulting normal
 				v3 hit_location = ray_origin + t*ray_direction;
-				next_normal = NOZ( hit_location / hadamard(current_ellipsoid.a, current_ellipsoid.a) - current_ellipsoid.P );
+				next_normal = NOZ( (hit_location - current_ellipsoid.P) / hadamard(current_ellipsoid.a, current_ellipsoid.a) );
 			}
 		}
 
@@ -574,7 +578,7 @@ int main() {
 	
 	// TODO: needs a direction / rotation!
 	ellipsoid ellipsoids[1];
-	ellipsoids[0].a = V3(1,1,0.6);
+	ellipsoids[0].a = V3(.7,1,1);
 	ellipsoids[0].P = V3(1,-.5,1);
 	ellipsoids[0].material_index = 5;
 	
