@@ -29,6 +29,10 @@ typedef union v3 {
 	struct {
 		f32 r,g,b;
 	};
+
+	struct {
+		f32 u,v,w;
+	};
 	
 	f32 E[3];
 } v3;
@@ -39,6 +43,10 @@ internal inline v3 operator*( f32 f, v3 v ) {
 }
 internal inline v3 operator/( v3 a, v3 b ) {
 	v3 result = { a.x/b.x, a.y/b.y, a.z/b.z };
+	return result;
+}
+internal inline v3 operator/( v3 a, f32 b ) {
+	v3 result = { a.x/b, a.y/b, a.z/b };
 	return result;
 }
 internal inline v3 operator-( v3 a, v3 b ) {
@@ -56,11 +64,12 @@ internal inline v3 operator+=( v3 &a, v3 b ) {
 	return a;
 }
 
-internal inline v3 operator-( v3 &a ) {
-	a.x = -a.x;
-	a.y = -a.y;
-	a.z = -a.z;
-	return a;
+internal inline v3 operator-( v3 a ) {
+	v3 result;
+	result.x = -a.x;
+	result.y = -a.y;
+	result.z = -a.z;
+	return result;
 }
 
 internal v3 V3( f32 x, f32 y, f32 z ) {
@@ -151,19 +160,36 @@ typedef struct material {
 	v3 color_emit;
 } material;
 
+typedef struct tri {
+	union {
+		v3 vert[3];
+		struct {
+			v3 a;
+			v3 b;
+			v3 c;
+		};
+	};
+
+	v3 N; // which side is up??
+	u32 material_index[3]; // 1 for each vertex
+} tri;
+
+
+
 typedef struct world {
-	u32 material_count;
+
 	material *materials;
 
-	u32 plane_count;
 	plane *planes;
-	
-	u32 sphere_count;
 	sphere *spheres;
-	
-	u32 ellipsoid_count;
 	ellipsoid *ellipsoids;
+	tri *triangles;
 	
+	u32 material_count;
+	u32 plane_count;
+	u32 sphere_count;
+	u32 ellipsoid_count;
+	u32 triangle_count;
 	
 } world;
 
@@ -252,6 +278,62 @@ f32 ray_intersects_plane( v3 ray_origin, v3 ray_direction, plane p ) {
 	return result;
 }
 
+
+u8 point_in_triangle( v3 p, tri t, v3 &uvw ) {
+
+	// Compute vectors        
+	v3 v0 = t.c - t.a;
+	v3 v1 = t.b - t.a;
+	v3 v2 = p - t.a;
+
+	// Compute dot products
+	f32 dot00 = inner(v0, v0);
+	f32 dot01 = inner(v0, v1);
+	f32 dot02 = inner(v0, v2);
+	f32 dot11 = inner(v1, v1);
+	f32 dot12 = inner(v1, v2);
+
+	// Compute barycentric coordinates
+	f32 inv_denom = 1.0f / (dot00 * dot11 - dot01 * dot01);
+	uvw.u = (dot11 * dot02 - dot01 * dot12) * inv_denom;
+	uvw.v = (dot00 * dot12 - dot01 * dot02) * inv_denom;
+	uvw.w = 1.0f - uvw.u - uvw.v;
+
+	// Check if point is in triangle
+	u8 result = (uvw.u >= 0) && (uvw.v >= 0) && (uvw.w >= 0);
+	return result;
+}
+
+f32 ray_intersects_triangle( v3 ray_origin, v3 ray_direction, tri t, v3 &uvw ) {
+
+	// ray intersect plane defined by t
+	// subproblem: create normal from points of triangle which I think is:
+	// cross(b-a, c-a); // make vert a the origin, then cross product b and c should be a normal
+	
+	// ray-plane:
+	f32 d; // r_0 + d * r_d
+	f32 denom = inner( t.N, ray_direction );
+	f32 tolerance = 0.000001f;
+	
+	if( denom < -tolerance || denom > tolerance ) {
+		// triangle center???
+		// how do we get the offset from the origin? Do we even need it?
+		d = ( - inner( t.N, ray_origin ) ) / denom;	
+		
+		v3 intersect_p = ray_origin + d * ray_direction;
+		// check is within bounds of actual triangle
+		u8 hit = point_in_triangle( intersect_p, t, uvw );
+		if( hit ) {
+			return d;
+		} else {
+			return F32MAX;
+		}
+		
+	}
+	
+	return F32MAX;
+}
+
 f32 ray_intersects_sphere( v3 ray_origin, v3 ray_direction, sphere s ) {
 	f32 result;
 
@@ -305,7 +387,6 @@ f32 ray_intersects_sphere( v3 ray_origin, v3 ray_direction, sphere s ) {
 	return result;
 }
 
-
 f32 ray_intersects_ellipsoid( v3 ray_origin, v3 ray_direction, ellipsoid e ) {
 	f32 result;
 	v3 relative_origin = ray_origin - e.P;
@@ -355,23 +436,24 @@ f32 ray_intersects_ellipsoid( v3 ray_origin, v3 ray_direction, ellipsoid e ) {
 	return result;
 }
 
-
 v3 ray_cast( world* w, v3 ray_origin, v3 ray_direction ) {
 
 	v3 result = {};
 	
 	f32 hit_distance;
 	f32 min_hit_distance = 0.0001f;
-	u32 hit_material_index;
+	u8 hit;
+	material mat_value = w->materials[0];
 	
-	u32 bounces_per_ray = 32;
+	u32 bounces_per_ray = 64;
 	
 	f32 t;
 	v3 attenuation = V3(1,1,1);
 	for( u32 bounce_count=0; bounce_count<bounces_per_ray; bounce_count++ ) {
 		
 		hit_distance = F32MAX;
-		hit_material_index = 0;
+		hit = 0;
+		mat_value = w->materials[0];
 		v3 next_normal;
 		
 		for( u32 plane_index=0; plane_index < w->plane_count; plane_index++ ) {
@@ -380,7 +462,8 @@ v3 ray_cast( world* w, v3 ray_origin, v3 ray_direction ) {
 			t = ray_intersects_plane( ray_origin, ray_direction, current_plane );
 			if( t > min_hit_distance && t < hit_distance ) {
 				hit_distance = t;
-				hit_material_index = current_plane.material_index;
+				mat_value = w->materials[current_plane.material_index];
+				hit = 1;
 				next_normal = current_plane.N;
 			}
 		}
@@ -391,7 +474,8 @@ v3 ray_cast( world* w, v3 ray_origin, v3 ray_direction ) {
 			t = ray_intersects_sphere( ray_origin, ray_direction, current_sphere );
 			if( t > min_hit_distance && t < hit_distance ) {
 				hit_distance = t;
-				hit_material_index = current_sphere.material_index;
+				mat_value = w->materials[current_sphere.material_index];
+				hit = 1;
 				next_normal = NOZ( ray_origin + t*ray_direction - current_sphere.P );
 			}
 		}
@@ -402,8 +486,8 @@ v3 ray_cast( world* w, v3 ray_origin, v3 ray_direction ) {
 			t = ray_intersects_ellipsoid( ray_origin, ray_direction, current_ellipsoid );
 			if( t > min_hit_distance && t < hit_distance ) {
 				hit_distance = t;
-				hit_material_index = current_ellipsoid.material_index;
-				// TODO: this is still wrong.
+				mat_value = w->materials[current_ellipsoid.material_index];
+				hit = 1;
 				// The normal of an ellipsoid is the gradient of x^2/a^ + y^2/b^2 + z^2/c^2 - 1 = 0
 				// Which is (2x/a^2, 2y/b^2, 2z/c^2)
 				// = 2 * point_on_surface / hadamard(e.a, e.a) (we can drop the 2 since we normalize anyway)
@@ -416,21 +500,55 @@ v3 ray_cast( world* w, v3 ray_origin, v3 ray_direction ) {
 				next_normal = NOZ( (hit_location - current_ellipsoid.P) / hadamard(current_ellipsoid.a, current_ellipsoid.a) );
 			}
 		}
+		
+		for( u32 triangle_index=0; triangle_index < w->triangle_count; triangle_index++ ) {
+			tri current_triangle = w->triangles[triangle_index];
 
-		material mat = w->materials[ hit_material_index ]; // either a mat or the nul mat
-		result += hadamard( attenuation, mat.color_emit );
-		if( hit_material_index ) {
+			v3 uvw = {};
+			t = ray_intersects_triangle( ray_origin, ray_direction, current_triangle, uvw );
+			if( t > min_hit_distance && t < hit_distance ) {
+				hit_distance = t;
+				hit = 1;
+
+				// f32 scatter_avg =
+				// 	uwv.u * w->materials[current_triangle.material_index[0]].scatter +
+				// 	uwv.v * w->materials[current_triangle.material_index[1]].scatter +
+				// 	uwv.w * w->materials[current_triangle.material_index[2]].scatter;
+				// scatter_avg /= 3.0f;
+				//
+				material m0 = w->materials[current_triangle.material_index[0]];
+				material m1 = w->materials[current_triangle.material_index[1]];
+				material m2 = w->materials[current_triangle.material_index[2]];
+				v3 color_emit_avg =
+					uvw.u * m0.color_emit +
+					uvw.v * m1.color_emit +
+					uvw.w * m2.color_emit;
+				// mat_value.scatter = scatter_avg;
+				mat_value.color_emit = NOZ(color_emit_avg);
+				v3 color_reflect_avg =
+					uvw.u * m0.color_reflect +
+					uvw.v * m1.color_reflect +
+					uvw.w * m2.color_reflect;
+				mat_value.color_reflect = NOZ(color_reflect_avg);
+				// printf("%f %f %f -> ce: %f %f %f\n", uvw.u, uvw.v, uvw.w, color_emit_avg.r, color_emit_avg.g, color_emit_avg.b);
+				// mat_value = w->materials[3];
+				next_normal = NOZ( current_triangle.N ); // NOZ( ray_origin + t*ray_direction - current_sphere.P );
+			}
+		}
+		
+		result += hadamard( attenuation, mat_value.color_emit );
+		if( hit ) {
 			// f32 cos_attenuation = inner( -ray_direction, next_normal );
 			// if( cos_attenuation < 0 ) {
 			// 	cos_attenuation = 0;
 			// }
-			attenuation = hadamard( attenuation, mat.color_reflect );
+			attenuation = hadamard( attenuation, mat_value.color_reflect );
 
 			ray_origin += hit_distance * ray_direction;
 
 			v3 bounce_pure = ray_direction - 2.0f * inner(ray_direction, next_normal) *  next_normal;
 			v3 bounce_random = NOZ( next_normal + V3(random_bilateral(), random_bilateral(), random_bilateral() ));
-			ray_direction = NOZ( lerp( bounce_random, mat.scatter, bounce_pure ) );
+			ray_direction = NOZ( lerp( bounce_random, mat_value.scatter, bounce_pure ) );
 		} else {
 			break; // no more hits
 		}
@@ -455,7 +573,7 @@ u32* get_pixel_pointer(image_rgba img, u32 x, u32 y) {
 
 void raytrace_tile( world *w, image_rgba img, u32 x_start, u32 x_max, u32 y_start, u32 y_max ) {
 
-	u32 rays_per_pixel = 16;
+	u32 rays_per_pixel = 32;
 	v3 camera_p = V3(0, -10, 2.4f);
 	// v3 camera_p = V3(0, 0.1f, 8);
 
@@ -520,34 +638,46 @@ int main() {
 	// image_rgba img = allocate_image( 2560, 1600 );
 	image_rgba img = allocate_image( 1280, 720 );
 // #if 0
-	material materials[8] = {};
+	material materials[9] = {};
 	materials[0].color_emit = V3(0.4f, 0.5f, 0.6f);
+	// materials[0].color_reflect = V3(0.9f, 0.9f, 0.9f);
 	materials[1].color_reflect = V3(.7f,.7f,.7f);
-	materials[1].scatter = 0.4f;
+	materials[1].scatter = 0.2f;
 	materials[2].color_reflect = V3(0.7f,0.5f,.3f);
 	materials[2].color_emit = V3(0,0,0);
+
+	// red light
 	materials[3].color_reflect = V3(0.5f,0.5f,0.5f);
 	materials[3].color_emit = V3(4.0f,0,0);
-	materials[4].color_reflect = V3(0.2f,0.8f,0.2f);
-	materials[4].color_emit = V3(0,0,0);
-	materials[4].scatter = 0.7f;
-	materials[5].color_reflect = V3(0.6f,0.6f,0.8f);
-	materials[5].color_emit = V3(0,0,0);
-	materials[5].scatter = 0.9f;
-	materials[6].color_reflect = V3(1,1,1);
-	// yellow light
+	// green light
+	materials[4].color_reflect = V3(0.5f,0.5f,0.5f);
+	materials[4].color_emit = V3(0,4.0f,0);
+	// blue light
+	materials[5].color_reflect = V3(0.5f,0.5f,0.5f);
+	materials[5].color_emit = V3(0,0,4.0f);
+	// orange light
+	materials[6].color_reflect = V3(0.5f,0.5f,0.5f);
+	materials[6].color_emit = V3(1.0f,0.4f,0.2f);
+	// purple light
 	materials[7].color_reflect = V3(0.5f,0.5f,0.5f);
-	materials[7].color_emit = V3(2.0f,2.0f,0.1f);
+	materials[7].color_emit = V3(100.0/255.0,0.0f,181.0/255.0);
+	// mirror
+	materials[8].color_reflect = V3(0.7f, 1.0f, 0.7f);
+	materials[8].scatter = 1.0f;
 	
 	plane planes[1];
 	planes[0].N = V3( 0, 0, 1.0f );
 	planes[0].d = 0;
 	planes[0].material_index = 1;
 	
-	sphere spheres[30];
-	spheres[0].r = 1;
-	spheres[0].P = V3(20,0,0);
-	spheres[0].material_index = 2;
+	sphere spheres[0];
+#if 0
+	spheres[0].r = 0.5;
+	spheres[0].P = V3(-1,-2,0);
+	spheres[0].material_index = 5;
+	spheres[1].r = 0.5;
+	spheres[1].P = V3(1,-2,0);
+	spheres[1].material_index = 6;
 	spheres[1].r = 0.4;
 	spheres[1].P = V3(3,-2,1);
 	spheres[1].material_index = 3;
@@ -557,7 +687,6 @@ int main() {
 	spheres[3].r = 1;
 	spheres[3].P = V3(1,-1,3);
 	spheres[3].material_index = 5;
-	
 	// coordspheres
 	u32 sidx = 4;
 	for( s32 x=-2; x<3; x++ ) {
@@ -570,6 +699,26 @@ int main() {
 	spheres[29].r = 0.2;
 	spheres[29].P = V3(1,-2,.5f);
 	spheres[29].material_index = 7;
+#endif
+	
+	tri triangles[1];
+	triangles[0].a = V3(-1.0f, 0, 0);
+	triangles[0].b = V3( 1.0f, 0, 0);
+	triangles[0].c = V3( 0, 0, 2);
+	triangles[0].N = -NOZ( cross( triangles[0].b - triangles[0].a, triangles[0].c - triangles[0].a) );
+	triangles[0].material_index[0] = 3;
+	triangles[0].material_index[1] = 4;
+	triangles[0].material_index[2] = 5;
+#if 0	
+	triangles[1].a = V3( 1.0f, 0, 0);
+	triangles[1].b = V3( 3.0f, 0, 0);
+	triangles[1].c = V3( 2.0f, 0, 2);
+	triangles[1].N = NOZ( cross( triangles[0].b - triangles[0].a, triangles[0].c - triangles[0].a) );
+	triangles[1].material_index[0] = 3;
+	triangles[1].material_index[1] = 4;
+	triangles[1].material_index[2] = 5;
+#endif
+	
 	
 	// spheres[30].r = 1;
 	// spheres[30].P = V3(1,-.5,1);
@@ -577,11 +726,12 @@ int main() {
 	
 	
 	// TODO: needs a direction / rotation!
-	ellipsoid ellipsoids[1];
-	ellipsoids[0].a = V3(.7,1,1);
+	ellipsoid ellipsoids[0];
+#if 0	
+	ellipsoids[0].a = V3(2,1,1);
 	ellipsoids[0].P = V3(1,-.5,1);
-	ellipsoids[0].material_index = 5;
-	
+	ellipsoids[0].material_index = 8;
+#endif
 	
 // #endif
 #if 0
@@ -621,6 +771,8 @@ int main() {
 	w.spheres = spheres;
 	w.ellipsoid_count = ARRAY_COUNT(ellipsoids);
 	w.ellipsoids = ellipsoids;
+	w.triangle_count = ARRAY_COUNT(triangles);
+	w.triangles = triangles;
 	
 	// let's do this!
 	// so we pass a ray from every point on the image in the camera direction onto the world and see what we hit.
